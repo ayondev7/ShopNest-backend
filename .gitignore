@@ -1,0 +1,55 @@
+# Node.js dependencies
+node_modules/
+.pnp
+.pnp.*
+/.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Lockfiles
+package-lock.json
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build outputs
+/dist
+/build
+/.next/
+/out/
+/coverage
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env*
+
+# Editor and OS files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Uploads directory (since images are stored in MongoDB, not filesystem)
+uploads/
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Miscellaneous
+*.pem
+logs/
+*.log
