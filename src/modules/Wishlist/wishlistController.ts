@@ -50,16 +50,13 @@ export const addToList = async (req: AuthRequest, res: Response): Promise<any> =
       });
     }
 
-    const wishlist = await wishlistService.addProductToWishlist(wishlistId, customerId, productId);
+    const result = await wishlistService.addProductToWishlistWithActivity(wishlistId, customerId, productId);
 
-    if (!wishlist) {
+    if (!result) {
       return res.status(404).json({ error: 'Wishlist not found' });
     }
 
-    const productTitle = await wishlistService.getProductTitle(productId);
-    await wishlistService.createWishlistActivity(customerId, wishlistId, 'added to wishlist', productTitle);
-
-    res.status(200).json({ message: 'Product added to wishlist', wishlist });
+    res.status(200).json({ message: 'Product added to wishlist', wishlist: result });
   } catch (error: any) {
     console.error('Add to list error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -114,15 +111,10 @@ export const removeFromWishlist = async (req: AuthRequest, res: Response): Promi
 
     const productIdsToRemove = Array.isArray(productId) ? productId : [productId];
 
-    const result = await wishlistService.removeProductsFromWishlist(wishlistId, customerId, productIdsToRemove);
+    const result = await wishlistService.removeProductsFromWishlistWithActivity(wishlistId, customerId, productIdsToRemove);
 
     if (!result) {
       return res.status(404).json({ error: 'Wishlist not found' });
-    }
-
-    for (const pid of productIdsToRemove) {
-      const productTitle = await wishlistService.getProductTitle(pid);
-      await wishlistService.createWishlistActivity(customerId, wishlistId, 'removed from wishlist', productTitle);
     }
 
     if (result.deleted) {

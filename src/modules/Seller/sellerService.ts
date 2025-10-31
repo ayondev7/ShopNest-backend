@@ -7,6 +7,7 @@ import { processAndUploadImage } from '../../utils/imageKitUtils.js';
 import { hashPassword } from '../../utils/authUtils.js';
 import { ISeller } from '../../types/index.js';
 import { Types } from 'mongoose';
+import mongoose from 'mongoose';
 
 export async function findSellerByEmail(email: string): Promise<ISeller | null> {
   return await Seller.findOne({ email });
@@ -17,27 +18,39 @@ export async function findSellerById(sellerId: Types.ObjectId | string): Promise
 }
 
 export async function createSeller(sellerData: any, imageFile: any): Promise<ISeller> {
-  const { name, email, password, phone } = sellerData;
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  let sellerImageUrl: string | null = null;
-  if (imageFile) {
-    const fileName = `${name.replace(/\s+/g, '_')}_${Date.now()}.webp`;
-    sellerImageUrl = await processAndUploadImage(imageFile.buffer, fileName);
+  try {
+    const { name, email, password, phone } = sellerData;
+
+    let sellerImageUrl: string | null = null;
+    if (imageFile) {
+      const fileName = `${name.replace(/\s+/g, '_')}_${Date.now()}.webp`;
+      sellerImageUrl = await processAndUploadImage(imageFile.buffer, fileName);
+    }
+
+    const hashedPassword = await hashPassword(password, 10);
+
+    const seller = new Seller({
+      name,
+      email,
+      phone,
+      lastNotificationSeen: null,
+      password: hashedPassword,
+      sellerImage: sellerImageUrl,
+    });
+
+    await seller.save({ session });
+    await session.commitTransaction();
+    session.endSession();
+    
+    return seller;
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
   }
-
-  const hashedPassword = await hashPassword(password, 10);
-
-  const seller = new Seller({
-    name,
-    email,
-    phone,
-    lastNotificationSeen: null,
-    password: hashedPassword,
-    sellerImage: sellerImageUrl,
-  });
-
-  await seller.save();
-  return seller;
 }
 
 export async function getSellerNotifications(sellerId: Types.ObjectId | string): Promise<any[]> {

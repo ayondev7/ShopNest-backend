@@ -6,6 +6,7 @@ import { processAndUploadImage } from '../../utils/imageKitUtils.js';
 import { hashPassword } from '../../utils/authUtils.js';
 import { ICustomer } from '../../types/index.js';
 import { Types } from 'mongoose';
+import mongoose from 'mongoose';
 
 export async function findCustomerByEmail(email: string): Promise<ICustomer | null> {
   return await Customer.findOne({ email });
@@ -16,32 +17,44 @@ export async function findCustomerById(customerId: Types.ObjectId | string): Pro
 }
 
 export async function createCustomer(customerData: any, imageFile: any): Promise<ICustomer> {
-  const { firstName, lastName, email, password, phone, bio } = customerData;
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  let customerImage: string | undefined;
-  if (imageFile) {
-    const fileName = `${firstName ? firstName.replace(/\s+/g, '_') : 'customer'}_${Date.now()}.webp`;
-    const imageUrl = await processAndUploadImage(imageFile.buffer, fileName);
-    if (imageUrl) {
-      customerImage = imageUrl;
+  try {
+    const { firstName, lastName, email, password, phone, bio } = customerData;
+
+    let customerImage: string | undefined;
+    if (imageFile) {
+      const fileName = `${firstName ? firstName.replace(/\s+/g, '_') : 'customer'}_${Date.now()}.webp`;
+      const imageUrl = await processAndUploadImage(imageFile.buffer, fileName);
+      if (imageUrl) {
+        customerImage = imageUrl;
+      }
     }
+
+    const hashedPassword = await hashPassword(password);
+
+    const customer = new Customer({
+      firstName,
+      lastName,
+      email,
+      password: hashedPassword,
+      phone,
+      lastNotificationSeen: null,
+      bio,
+      ...(customerImage && { customerImage }),
+    });
+
+    await customer.save({ session });
+    await session.commitTransaction();
+    session.endSession();
+    
+    return customer;
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
   }
-
-  const hashedPassword = await hashPassword(password);
-
-  const customer = new Customer({
-    firstName,
-    lastName,
-    email,
-    password: hashedPassword,
-    phone,
-    lastNotificationSeen: null,
-    bio,
-    ...(customerImage && { customerImage }),
-  });
-
-  await customer.save();
-  return customer;
 }
 
 export async function updateCustomerProfile(customerId: Types.ObjectId | string, updates: any, imageFile?: any): Promise<ICustomer | null> {

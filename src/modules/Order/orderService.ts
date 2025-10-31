@@ -243,53 +243,78 @@ export async function getOrderById(orderId: any, sellerId: any) {
 }
 
 export async function updateOrderStatus(orderId: any, orderStatus: string, customerId: any, sellerId: any) {
-  const order = await Order.findById(orderId);
-  if (!order) return null;
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  if (sellerId) {
-    const product = await Product.findOne({ _id: order.productId, sellerId });
-    if (!product) return { authorized: false };
-  } else if (customerId) {
-    if (String(order.customerId) !== String(customerId)) {
-      return { authorized: false };
+  try {
+    const order = await Order.findById(orderId).session(session);
+    if (!order) {
+      await session.abortTransaction();
+      session.endSession();
+      return null;
     }
-  }
 
-  if (orderStatus === 'buy again') {
-    const newOrderData: any = order.toObject();
-    delete newOrderData._id;
-    newOrderData.orderStatus = 'pending';
-    newOrderData.createdAt = new Date();
-    newOrderData.updatedAt = new Date();
-
-    const newOrder = await Order.create(newOrderData);
-    return { buyAgain: true, newOrder };
-  }
-
-  order.orderStatus = orderStatus;
-  await order.save();
-
-  await RecentActivity.create({
-    customerId: order.customerId,
-    orderId: order._id,
-    activityType: `order ${orderStatus}`,
-    activityStatus: `Your order #${order.orderId} has been ${orderStatus}`,
-  });
-
-  if (customerId && !sellerId) {
-    const product = await Product.findById(order.productId);
-    if (product && product.sellerId) {
-      await SellerNotification.create({
-        notificationType: `Order ${orderStatus}`,
-        orderId: order._id,
-        sellerId: product.sellerId,
-        description: `Order #${order.orderId} has been ${order.orderStatus} by the customer.`,
-        timestamp: new Date(),
-      });
+    if (sellerId) {
+      const product = await Product.findOne({ _id: order.productId, sellerId }).session(session);
+      if (!product) {
+        await session.abortTransaction();
+        session.endSession();
+        return { authorized: false };
+      }
+    } else if (customerId) {
+      if (String(order.customerId) !== String(customerId)) {
+        await session.abortTransaction();
+        session.endSession();
+        return { authorized: false };
+      }
     }
-  }
 
-  return { success: true, order };
+    if (orderStatus === 'buy again') {
+      const newOrderData: any = order.toObject();
+      delete newOrderData._id;
+      newOrderData.orderStatus = 'pending';
+      newOrderData.createdAt = new Date();
+      newOrderData.updatedAt = new Date();
+
+      const newOrder = new Order(newOrderData);
+      await newOrder.save({ session });
+
+      await session.commitTransaction();
+      session.endSession();
+      return { buyAgain: true, newOrder };
+    }
+
+    order.orderStatus = orderStatus;
+    await order.save({ session });
+
+    await RecentActivity.create([{
+      customerId: order.customerId,
+      orderId: order._id,
+      activityType: `order ${orderStatus}`,
+      activityStatus: `Your order #${order.orderId} has been ${orderStatus}`,
+    }], { session });
+
+    if (customerId && !sellerId) {
+      const product = await Product.findById(order.productId).session(session);
+      if (product && product.sellerId) {
+        await SellerNotification.create([{
+          notificationType: `Order ${orderStatus}`,
+          orderId: order._id,
+          sellerId: product.sellerId,
+          description: `Order #${order.orderId} has been ${order.orderStatus} by the customer.`,
+          timestamp: new Date(),
+        }], { session });
+      }
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+    return { success: true, order };
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
+  }
 }
 
 export async function getOrderStatusCounts(sellerId: any) {

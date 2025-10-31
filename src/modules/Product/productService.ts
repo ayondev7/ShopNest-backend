@@ -2,45 +2,58 @@ import Product from './productModel';
 import Wishlist from '../Wishlist/wishlistModel';
 import { processAndUploadMultipleImages, processImageToWebp, uploadImageToImageKit } from '../../utils/imageKitUtils';
 import { parseArrayField } from '../../utils/validationUtils';
+import mongoose from 'mongoose';
 
 export async function createProduct(productData: any, files: any[], sellerId: any) {
-  let productImages: string[] = [];
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  if (files && files.length > 0) {
-    productImages = await processAndUploadMultipleImages(files, `product_${Date.now()}`);
+  try {
+    let productImages: string[] = [];
+
+    if (files && files.length > 0) {
+      productImages = await processAndUploadMultipleImages(files, `product_${Date.now()}`);
+    }
+
+    const conditions = parseArrayField(productData.conditions);
+    const features = parseArrayField(productData.features);
+    const tags = parseArrayField(productData.tags);
+    const specifications = productData.specifications ? parseArrayField(productData.specifications) : undefined;
+
+    const product = new Product({
+      title: productData.title,
+      description: productData.description,
+      productImages,
+      category: productData.category,
+      brand: productData.brand,
+      model: productData.model,
+      storage: productData.storage,
+      colour: productData.colour,
+      ram: productData.ram,
+      conditions,
+      features,
+      price: Number(productData.price),
+      salePrice: productData.salePrice ? Number(productData.salePrice) : undefined,
+      quantity: Number(productData.quantity),
+      sku: productData.sku,
+      negotiable: productData.negotiable === 'true' || productData.negotiable === true,
+      tags,
+      seoTitle: productData.seoTitle,
+      seoDescription: productData.seoDescription,
+      specifications,
+      sellerId,
+    });
+
+    await product.save({ session });
+    await session.commitTransaction();
+    session.endSession();
+    
+    return product;
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
   }
-
-  const conditions = parseArrayField(productData.conditions);
-  const features = parseArrayField(productData.features);
-  const tags = parseArrayField(productData.tags);
-  const specifications = productData.specifications ? parseArrayField(productData.specifications) : undefined;
-
-  const product = new Product({
-    title: productData.title,
-    description: productData.description,
-    productImages,
-    category: productData.category,
-    brand: productData.brand,
-    model: productData.model,
-    storage: productData.storage,
-    colour: productData.colour,
-    ram: productData.ram,
-    conditions,
-    features,
-    price: Number(productData.price),
-    salePrice: productData.salePrice ? Number(productData.salePrice) : undefined,
-    quantity: Number(productData.quantity),
-    sku: productData.sku,
-    negotiable: productData.negotiable === 'true' || productData.negotiable === true,
-    tags,
-    seoTitle: productData.seoTitle,
-    seoDescription: productData.seoDescription,
-    specifications,
-    sellerId,
-  });
-
-  await product.save();
-  return product;
 }
 
 export async function getProductsBySeller(sellerId: any) {

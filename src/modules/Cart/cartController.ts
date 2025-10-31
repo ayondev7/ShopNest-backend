@@ -32,18 +32,24 @@ export const addToCart = async (req: AuthRequest, res: Response): Promise<any> =
       }
 
       const productIds = Array.isArray(productId) ? productId : [productId];
-      const result = await cartService.processWishlistToCart(customerId, wishlist, productIds);
+      
+      try {
+        const result = await cartService.processWishlistToCart(customerId, wishlist, productIds);
 
-      added.push(...result.added);
-      skipped.push(...result.skipped);
+        added.push(...result.added);
+        skipped.push(...result.skipped);
 
-      if (result.productsToRemove.length > 0) {
-        const removeResult = await cartService.removeProductsFromWishlist(wishlistId, result.productsToRemove);
-        if (removeResult.deleted) {
-          deletedWishlistIds.push(wishlistId);
-        } else if (removeResult.updated) {
-          updatedWishlistIds.push(wishlistId);
+        if (result.productsToRemove.length > 0) {
+          const removeResult = await cartService.removeProductsFromWishlist(wishlistId, result.productsToRemove);
+          if (removeResult.deleted) {
+            deletedWishlistIds.push(wishlistId);
+          } else if (removeResult.updated) {
+            updatedWishlistIds.push(wishlistId);
+          }
         }
+      } catch (error: any) {
+        console.error('Error processing wishlist to cart:', error);
+        skipped.push({ wishlistId, reason: 'Failed to process' });
       }
     }
 

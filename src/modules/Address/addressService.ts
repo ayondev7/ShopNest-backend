@@ -1,23 +1,42 @@
 import Address from './addressModel.js';
 import { Types } from 'mongoose';
+import mongoose from 'mongoose';
 
 export async function createAddress(customerId: Types.ObjectId | string, addressData: any): Promise<any> {
   const { addressLine, city, zipCode, country, state, isDefault, name } = addressData;
 
-  if (isDefault) {
-    await clearDefaultAddresses(customerId);
-  }
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  return await Address.create({
-    customerId,
-    addressLine,
-    city,
-    zipCode,
-    country,
-    state,
-    name: name?.trim() || 'Unnamed',
-    isDefault: !!isDefault
-  });
+  try {
+    if (isDefault) {
+      await Address.updateMany(
+        { customerId, isDefault: true },
+        { isDefault: false }
+      ).session(session);
+    }
+
+    const address = new Address({
+      customerId,
+      addressLine,
+      city,
+      zipCode,
+      country,
+      state,
+      name: name?.trim() || 'Unnamed',
+      isDefault: !!isDefault
+    });
+
+    await address.save({ session });
+    await session.commitTransaction();
+    session.endSession();
+    
+    return address;
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
+  }
 }
 
 export async function clearDefaultAddresses(customerId: Types.ObjectId | string): Promise<void> {
@@ -47,13 +66,30 @@ export async function deleteAddressById(addressId: string, customerId: Types.Obj
 }
 
 export async function setAddressAsDefault(addressId: string, customerId: Types.ObjectId | string): Promise<any> {
-  await clearDefaultAddresses(customerId);
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  return await Address.findOneAndUpdate(
-    { _id: addressId, customerId },
-    { isDefault: true },
-    { new: true }
-  );
+  try {
+    await Address.updateMany(
+      { customerId, isDefault: true },
+      { isDefault: false }
+    ).session(session);
+
+    const address = await Address.findOneAndUpdate(
+      { _id: addressId, customerId },
+      { isDefault: true },
+      { new: true, session }
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+    
+    return address;
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
+  }
 }
 
 export async function findAddressById(addressId: string): Promise<any> {

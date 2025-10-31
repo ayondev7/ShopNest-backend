@@ -3,6 +3,7 @@ import CartItem from './cartItemModel.js';
 import Product from '../Product/productModel.js';
 import Wishlist from '../Wishlist/wishlistModel.js';
 import { Types } from 'mongoose';
+import mongoose from 'mongoose';
 
 export async function findCartByCustomerAndTitle(customerId: Types.ObjectId | string, title: string): Promise<any> {
   return await Cart.findOne({ customerId, title });
@@ -43,45 +44,74 @@ export async function addProductToCart(customerId: Types.ObjectId | string, prod
 }
 
 export async function processWishlistToCart(customerId: Types.ObjectId | string, wishlist: any, productIds: string[]): Promise<any> {
-  const title = wishlist.title;
-  let cart = await findCartByCustomerAndTitle(customerId, title);
-  
-  if (!cart) {
-    cart = await createCart(customerId, title);
-  }
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  const added = [];
-  const skipped = [];
-  const productsToRemove = [];
-
-  for (const pid of productIds) {
-    if (cart.productIds.includes(pid)) {
-      skipped.push({ title, productId: pid, reason: 'Already in cart' });
-    } else {
-      cart.productIds.push(pid);
-      added.push({ title, productId: pid });
-      productsToRemove.push(pid);
+  try {
+    const title = wishlist.title;
+    let cart = await Cart.findOne({ customerId, title }).session(session);
+    
+    if (!cart) {
+      cart = new Cart({ customerId, title, productIds: [] });
     }
-  }
 
-  await cart.save();
-  return { added, skipped, productsToRemove };
+    const added = [];
+    const skipped = [];
+    const productsToRemove = [];
+
+    for (const pid of productIds) {
+      if (cart.productIds.map(String).includes(String(pid))) {
+        skipped.push({ title, productId: pid, reason: 'Already in cart' });
+      } else {
+        cart.productIds.push(pid as any);
+        added.push({ title, productId: pid });
+        productsToRemove.push(pid);
+      }
+    }
+
+    await cart.save({ session });
+    await session.commitTransaction();
+    session.endSession();
+    
+    return { added, skipped, productsToRemove };
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
+  }
 }
 
 export async function removeProductsFromWishlist(wishlistId: string, productIds: string[]): Promise<any> {
-  const wishlist = await Wishlist.findById(wishlistId);
-  if (!wishlist) return { deleted: false, updated: false };
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  wishlist.productIds = wishlist.productIds.filter(
-    (id: any) => !productIds.includes(id.toString())
-  );
+  try {
+    const wishlist = await Wishlist.findById(wishlistId).session(session);
+    if (!wishlist) {
+      await session.commitTransaction();
+      session.endSession();
+      return { deleted: false, updated: false };
+    }
 
-  if (wishlist.productIds.length === 0) {
-    await Wishlist.findByIdAndDelete(wishlistId);
-    return { deleted: true, updated: false };
-  } else {
-    await wishlist.save();
-    return { deleted: false, updated: true };
+    wishlist.productIds = wishlist.productIds.filter(
+      (id: any) => !productIds.includes(id.toString())
+    );
+
+    if (wishlist.productIds.length === 0) {
+      await Wishlist.findByIdAndDelete(wishlistId).session(session);
+      await session.commitTransaction();
+      session.endSession();
+      return { deleted: true, updated: false };
+    } else {
+      await wishlist.save({ session });
+      await session.commitTransaction();
+      session.endSession();
+      return { deleted: false, updated: true };
+    }
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
   }
 }
 
@@ -122,43 +152,57 @@ export function formatCartProducts(carts: any[]): any {
 }
 
 export async function removeProductsFromCarts(customerId: Types.ObjectId | string, cartIds: string[], productIds: string[]): Promise<any> {
-  const carts = await Cart.find({ 
-    _id: { $in: cartIds }, 
-    customerId 
-  });
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  if (!carts || carts.length === 0) {
-    return { cartsProcessed: 0, cartsModified: 0, cartsDeleted: 0 };
-  }
+  try {
+    const carts = await Cart.find({ 
+      _id: { $in: cartIds }, 
+      customerId 
+    }).session(session);
 
-  let cartsModified = 0;
-  let cartsDeleted = 0;
-
-  for (const cart of carts) {
-    const initialLength = cart.productIds.length;
-    
-    cart.productIds = cart.productIds.filter(
-      (p: any) => !productIds.includes(p.toString())
-    );
-
-    if (cart.productIds.length !== initialLength) {
-      cartsModified++;
+    if (!carts || carts.length === 0) {
+      await session.commitTransaction();
+      session.endSession();
+      return { cartsProcessed: 0, cartsModified: 0, cartsDeleted: 0 };
     }
 
-    if (cart.productIds.length === 0) {
-      await Cart.deleteOne({ _id: cart._id });
-      cartsDeleted++;
-      cartsModified--;
-    } else {
-      await cart.save();
-    }
-  }
+    let cartsModified = 0;
+    let cartsDeleted = 0;
 
-  return {
-    cartsProcessed: carts.length,
-    cartsModified,
-    cartsDeleted
-  };
+    for (const cart of carts) {
+      const initialLength = cart.productIds.length;
+      
+      cart.productIds = cart.productIds.filter(
+        (p: any) => !productIds.includes(p.toString())
+      );
+
+      if (cart.productIds.length !== initialLength) {
+        cartsModified++;
+      }
+
+      if (cart.productIds.length === 0) {
+        await Cart.deleteOne({ _id: cart._id }).session(session);
+        cartsDeleted++;
+        cartsModified--;
+      } else {
+        await cart.save({ session });
+      }
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return {
+      cartsProcessed: carts.length,
+      cartsModified,
+      cartsDeleted
+    };
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
+  }
 }
 
 export async function updateCartItemQuantity(customerId: Types.ObjectId | string, productId: string, quantity: number): Promise<any> {
