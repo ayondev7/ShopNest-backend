@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit';
 import { join } from 'path';
 import connectDB from './config/database.js';
 import routes from './routes/index.js';
+import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 
 const app = express();
 const allowedOrigin = process.env.FRONTEND_URL;
@@ -35,10 +36,8 @@ app.use('/uploads', express.static(join(process.cwd(), 'uploads')));
 
 app.use('/api', routes);
 
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error(err);
-  res.status(500).json({ error: 'Something went wrong!' });
-});
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 (async () => {
   try {

@@ -4,8 +4,10 @@ import Address from '../Address/addressModel';
 import mongoose from 'mongoose';
 import { TempOrder } from './tempOrderModel';
 import Cart from '../Cart/cartModel';
+import { asyncHandler } from '../../utils/asyncHandler.js';
+import { BadRequestError, NotFoundError, AuthenticationError, AuthorizationError } from '../../utils/errorClasses.js';
 
-export const AddOrder = async (req: Request, res: Response): Promise<void> => {
+export const AddOrder = asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -32,15 +34,13 @@ export const AddOrder = async (req: Request, res: Response): Promise<void> => {
     if (!customerId) {
       await session.abortTransaction();
       session.endSession();
-      res.status(400).json({ success: false, message: 'Customer ID is required' });
-      return;
+      throw new BadRequestError('Customer ID is required');
     }
 
     if (!checkoutPayload || !checkoutPayload.products || checkoutPayload.products.length === 0) {
       await session.abortTransaction();
       session.endSession();
-      res.status(400).json({ success: false, message: 'Products are required in checkout payload' });
-      return;
+      throw new BadRequestError('Products are required in checkout payload');
     }
 
     let shippingInfoId;
@@ -52,8 +52,7 @@ export const AddOrder = async (req: Request, res: Response): Promise<void> => {
       if (!addressLine1 || !city || !zipCode || !country) {
         await session.abortTransaction();
         session.endSession();
-        res.status(400).json({ success: false, message: 'Address details are required when addressId is not provided' });
-        return;
+        throw new BadRequestError('Address details are required when addressId is not provided');
       }
 
       const primaryAddress = new Address({
@@ -98,8 +97,7 @@ export const AddOrder = async (req: Request, res: Response): Promise<void> => {
       if (!foundAddress) {
         await session.abortTransaction();
         session.endSession();
-        res.status(404).json({ success: false, message: 'Address not found' });
-        return;
+        throw new NotFoundError('Address not found');
       }
       addressForGateway = {
         addressLine: foundAddress.addressLine,
@@ -123,8 +121,7 @@ export const AddOrder = async (req: Request, res: Response): Promise<void> => {
       if (!productId || !quantity || price === undefined) {
         await session.abortTransaction();
         session.endSession();
-        res.status(400).json({ success: false, message: 'Each product must have productId, quantity, and price' });
-        return;
+        throw new BadRequestError('Each product must have productId, quantity, and price');
       }
 
       const quantityNum = parseInt(quantity);
@@ -219,9 +216,9 @@ export const AddOrder = async (req: Request, res: Response): Promise<void> => {
       }
     } catch (abortErr) {}
     session.endSession();
-    res.status(500).json({ success: false, message: 'Failed to create order', error: error.message });
+    throw error;
   }
-};
+});
 
 export const paymentSuccess = async (req: Request, res: Response): Promise<void> => {
   const { tran_id } = req.query;
@@ -302,121 +299,90 @@ export const paymentCancel = async (req: Request, res: Response): Promise<void> 
   await paymentFail(req, res);
 };
 
-export const getAllOrders = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const customer = (req as any).customer;
+export const getAllOrders = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const customer = (req as any).customer;
 
-    if (!customer || !customer._id) {
-      res.status(400).json({ success: false, message: 'Customer information not found' });
-      return;
-    }
-
-    const orders = await orderService.getOrdersByCustomer(customer._id);
-
-    res.status(200).json({ success: true, count: orders.length, orders });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: 'Server error while fetching orders', error: error.message });
+  if (!customer || !customer._id) {
+    throw new BadRequestError('Customer information not found');
   }
-};
 
-export const getSellerOrders = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const seller = (req as any).seller;
+  const orders = await orderService.getOrdersByCustomer(customer._id);
 
-    if (!seller || !seller._id) {
-      res.status(400).json({ success: false, message: 'Seller information not found' });
-      return;
-    }
+  res.status(200).json({ success: true, count: orders.length, orders });
+});
 
-    const orders = await orderService.getOrdersBySeller(seller._id);
+export const getSellerOrders = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const seller = (req as any).seller;
 
-    res.status(200).json({ success: true, count: orders.length, data: orders });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: 'Server error while fetching seller orders', error: error.message });
+  if (!seller || !seller._id) {
+    throw new BadRequestError('Seller information not found');
   }
-};
 
-export const getOrderById = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const sellerId = (req as any).seller._id;
+  const orders = await orderService.getOrdersBySeller(seller._id);
 
-    const order = await orderService.getOrderById(id, sellerId);
+  res.status(200).json({ success: true, count: orders.length, data: orders });
+});
 
-    if (!order) {
-      res.status(404).json({ message: 'Order not found or unauthorized' });
-      return;
-    }
+export const getOrderById = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const sellerId = (req as any).seller._id;
 
-    res.json(order);
-  } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+  const order = await orderService.getOrderById(id, sellerId);
+
+  if (!order) {
+    throw new NotFoundError('Order not found or unauthorized');
   }
-};
 
-export const updateOrderStatus = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { orderId } = req.params;
-    const { orderStatus } = req.body;
+  res.json(order);
+});
 
-    const sellerId = (req as any).seller?._id;
-    const customerId = (req as any).customer?._id;
+export const updateOrderStatus = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const { orderId } = req.params;
+  const { orderStatus } = req.body;
 
-    if (!orderId || !orderStatus) {
-      res.status(400).json({ message: 'Order ID and orderStatus are required.' });
-      return;
-    }
+  const sellerId = (req as any).seller?._id;
+  const customerId = (req as any).customer?._id;
 
-    const result = await orderService.updateOrderStatus(orderId, orderStatus, customerId, sellerId);
-
-    if (!result) {
-      res.status(404).json({ message: 'Order not found.' });
-      return;
-    }
-
-    if ('authorized' in result && !result.authorized) {
-      res.status(403).json({ message: 'You are not authorized to update this order.' });
-      return;
-    }
-
-    if ('buyAgain' in result && result.buyAgain) {
-      res.status(201).json({ message: 'New order created successfully for Buy Again.', newOrder: result.newOrder });
-      return;
-    }
-
-    res.status(200).json({ message: 'Order status updated successfully.', order: result.order });
-  } catch (error) {
-    res.status(500).json({ message: 'Internal server error.' });
+  if (!orderId || !orderStatus) {
+    throw new BadRequestError('Order ID and orderStatus are required.');
   }
-};
 
-export const getOrderStatusCounts = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const seller = (req as any).seller;
-    const { _id: sellerId } = seller;
+  const result = await orderService.updateOrderStatus(orderId, orderStatus, customerId, sellerId);
 
-    const counts = await orderService.getOrderStatusCounts(sellerId);
-
-    res.status(200).json(counts);
-  } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+  if (!result) {
+    throw new NotFoundError('Order not found.');
   }
-};
 
-export const getAllPayments = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const customer = (req as any).customer;
-    const customerId = customer?._id;
-
-    if (!customerId) {
-      res.status(400).json({ message: 'Customer ID is required' });
-      return;
-    }
-
-    const payments = await orderService.getPaymentsByCustomer(customerId);
-
-    res.status(200).json({ success: true, payments });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error' });
+  if ('authorized' in result && !result.authorized) {
+    throw new AuthorizationError('You are not authorized to update this order.');
   }
-};
+
+  if ('buyAgain' in result && result.buyAgain) {
+    res.status(201).json({ message: 'New order created successfully for Buy Again.', newOrder: result.newOrder });
+    return;
+  }
+
+  res.status(200).json({ message: 'Order status updated successfully.', order: result.order });
+});
+
+export const getOrderStatusCounts = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const seller = (req as any).seller;
+  const { _id: sellerId } = seller;
+
+  const counts = await orderService.getOrderStatusCounts(sellerId);
+
+  res.status(200).json(counts);
+});
+
+export const getAllPayments = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const customer = (req as any).customer;
+  const customerId = customer?._id;
+
+  if (!customerId) {
+    throw new BadRequestError('Customer ID is required');
+  }
+
+  const payments = await orderService.getPaymentsByCustomer(customerId);
+
+  res.status(200).json({ success: true, payments });
+});

@@ -1,32 +1,29 @@
 import { Response } from 'express';
 import * as wishlistService from './wishlistService.js';
 import { AuthRequest } from '../../types/index.js';
+import { asyncHandler } from '../../utils/asyncHandler.js';
+import { AuthenticationError, BadRequestError, ConflictError, NotFoundError } from '../../utils/errorClasses.js';
 
-export const createList = async (req: AuthRequest, res: Response): Promise<any> => {
-  try {
-    const { customer } = req;
-    if (!customer) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    const { _id: customerId } = customer;
-    const { title } = req.body;
-
-    if (!title) {
-      return res.status(400).json({ error: 'Title is required' });
-    }
-
-    const existing = await wishlistService.findWishlistByCustomerAndTitle(customerId, title);
-    if (existing) {
-      return res.status(409).json({ message: 'A wishlist with this title already exists' });
-    }
-
-    const wishlist = await wishlistService.createWishlist(customerId, title);
-    res.status(201).json({ message: 'Wishlist created', wishlist });
-  } catch (error: any) {
-    console.error('Create list error:', error);
-    res.status(500).json({ error: 'Server error' });
+export const createList = asyncHandler(async (req: AuthRequest, res: Response): Promise<any> => {
+  const { customer } = req;
+  if (!customer) {
+    throw new AuthenticationError('Unauthorized');
   }
-};
+  const { _id: customerId } = customer;
+  const { title } = req.body;
+
+  if (!title) {
+    throw new BadRequestError('Title is required');
+  }
+
+  const existing = await wishlistService.findWishlistByCustomerAndTitle(customerId, title);
+  if (existing) {
+    throw new ConflictError('A wishlist with this title already exists');
+  }
+
+  const wishlist = await wishlistService.createWishlist(customerId, title);
+  res.status(201).json({ message: 'Wishlist created', wishlist });
+});
 
 export const addToList = async (req: AuthRequest, res: Response): Promise<any> => {
   try {
@@ -63,41 +60,31 @@ export const addToList = async (req: AuthRequest, res: Response): Promise<any> =
   }
 };
 
-export const getAllLists = async (req: AuthRequest, res: Response): Promise<any> => {
-  try {
-    if (req.seller) {
-      return res.status(200).json({ wishlists: [] });
-    }
-
-    const { customer } = req;
-    if (!customer) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    const { _id: customerId } = customer;
-
-    const wishlists = await wishlistService.getWishlistsByCustomer(customerId);
-    res.status(200).json({ wishlists });
-  } catch (error: any) {
-    console.error('Error fetching wishlists:', error);
-    res.status(500).json({ error: 'Server error' });
+export const getAllLists = asyncHandler(async (req: AuthRequest, res: Response): Promise<any> => {
+  if (req.seller) {
+    return res.status(200).json({ wishlists: [] });
   }
-};
 
-export const getWishlistItems = async (req: AuthRequest, res: Response): Promise<any> => {
-  try {
-    const { customer } = req;
-    if (!customer) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    const { _id: customerId } = customer;
-
-    const results = await wishlistService.getWishlistItemsByCustomer(customerId);
-    res.status(200).json({ lists: results });
-  } catch (error: any) {
-    console.error('Error fetching wishlist items:', error);
-    res.status(500).json({ error: 'Server error' });
+  const { customer } = req;
+  if (!customer) {
+    throw new AuthenticationError('Unauthorized');
   }
-};
+  const { _id: customerId } = customer;
+
+  const wishlists = await wishlistService.getWishlistsByCustomer(customerId);
+  res.status(200).json({ wishlists });
+});
+
+export const getWishlistItems = asyncHandler(async (req: AuthRequest, res: Response): Promise<any> => {
+  const { customer } = req;
+  if (!customer) {
+    throw new AuthenticationError('Unauthorized');
+  }
+  const { _id: customerId } = customer;
+
+  const results = await wishlistService.getWishlistItemsByCustomer(customerId);
+  res.status(200).json({ lists: results });
+});
 
 export const removeFromWishlist = async (req: AuthRequest, res: Response): Promise<any> => {
   try {

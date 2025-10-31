@@ -5,150 +5,120 @@ import { validationResult } from 'express-validator';
 import { createSellerValidators, loginSellerValidators } from './sellerValidation.js';
 import { generateToken, comparePassword } from '../../utils/authUtils.js';
 import { AuthRequest } from '../../types/index.js';
+import { asyncHandler } from '../../utils/asyncHandler.js';
+import { ValidationError, AuthenticationError, NotFoundError, ConflictError, BadRequestError } from '../../utils/errorClasses.js';
 
 export const createSeller = [
   ...createSellerValidators,
 
-  async (req: AuthRequest, res: Response): Promise<any> => {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-      }
-
-      const { email } = req.body;
-
-      if (!req.file) {
-        return res.status(400).json({ error: 'Seller image is required' });
-      }
-
-      const existingSeller = await sellerService.findSellerByEmail(email);
-      if (existingSeller) {
-        return res.status(400).json({ error: 'Email already in use' });
-      }
-
-      const seller = await sellerService.createSeller(req.body, req.file);
-      const accessToken = generateToken({ sellerId: seller._id });
-
-      res.status(201).json({
-        accessToken,
-        sellerId: seller._id,
-      });
-    } catch (error: any) {
-      if (error && error.name === 'ValidationError') {
-        return res.status(400).json({ error: error.message });
-      }
-      res.status(500).json({ error: 'Server error', details: (error && error.message) || null });
+  asyncHandler(async (req: AuthRequest, res: Response): Promise<any> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError(errors.array()[0].msg);
     }
-  },
+
+    const { email } = req.body;
+
+    if (!req.file) {
+      throw new BadRequestError('Seller image is required');
+    }
+
+    const existingSeller = await sellerService.findSellerByEmail(email);
+    if (existingSeller) {
+      throw new ConflictError('Email already in use');
+    }
+
+    const seller = await sellerService.createSeller(req.body, req.file);
+    const accessToken = generateToken({ sellerId: seller._id });
+
+    res.status(201).json({
+      accessToken,
+      sellerId: seller._id,
+    });
+  }),
 ];
 
 export const loginSeller = [
   ...loginSellerValidators,
 
-  async (req: AuthRequest, res: Response): Promise<any> => {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-      }
-
-      const { email, password } = req.body;
-
-      const seller = await Seller.findOne({ email }).select('+password');
-      if (!seller) {
-        return res.status(401).json({ error: 'Invalid email' });
-      }
-
-      const isPasswordValid = await comparePassword(password, seller.password);
-      if (!isPasswordValid) {
-        return res.status(401).json({ error: 'Invalid password' });
-      }
-
-      const accessToken = generateToken({ sellerId: seller._id });
-      const sellerData = sellerService.formatSellerData(seller);
-
-      res.status(200).json({
-        accessToken,
-        seller: sellerData,
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: 'Server error' });
+  asyncHandler(async (req: AuthRequest, res: Response): Promise<any> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError(errors.array()[0].msg);
     }
-  },
+
+    const { email, password } = req.body;
+
+    const seller = await Seller.findOne({ email }).select('+password');
+    if (!seller) {
+      throw new AuthenticationError('Invalid email');
+    }
+
+    const isPasswordValid = await comparePassword(password, seller.password);
+    if (!isPasswordValid) {
+      throw new AuthenticationError('Invalid password');
+    }
+
+    const accessToken = generateToken({ sellerId: seller._id });
+    const sellerData = sellerService.formatSellerData(seller);
+
+    res.status(200).json({
+      accessToken,
+      seller: sellerData,
+    });
+  }),
 ];
 
-export const getAllSellers = async (req: AuthRequest, res: Response): Promise<any> => {
-  try {
-    const sellers = await Seller.find().select('-password');
+export const getAllSellers = asyncHandler(async (req: AuthRequest, res: Response): Promise<any> => {
+  const sellers = await Seller.find().select('-password');
 
-    const sellersWithImages = sellers.map((seller: any) => {
-      const { sellerImage, ...sellerData } = seller.toObject();
-      return {
-        ...sellerData,
-        sellerImage: sellerImage || null,
-      };
-    });
+  const sellersWithImages = sellers.map((seller: any) => {
+    const { sellerImage, ...sellerData } = seller.toObject();
+    return {
+      ...sellerData,
+      sellerImage: sellerImage || null,
+    };
+  });
 
-    res.status(200).json(sellersWithImages);
-  } catch (error: any) {
-    res.status(500).json({ error: 'Server error' });
+  res.status(200).json(sellersWithImages);
+});
+
+export const getSellerProfile = asyncHandler(async (req: AuthRequest, res: Response): Promise<any> => {
+  const { seller } = req;
+
+  if (!seller || !seller._id) {
+    throw new AuthenticationError('Unauthorized: Seller not found in request');
   }
-};
 
-export const getSellerProfile = async (req: AuthRequest, res: Response): Promise<any> => {
-  try {
-    const { seller } = req;
+  const foundSeller = await sellerService.findSellerById(seller._id);
 
-    if (!seller || !seller._id) {
-      return res.status(401).json({
-        success: false,
-        message: 'Unauthorized: Seller not found in request',
-      });
-    }
-
-    const foundSeller = await sellerService.findSellerById(seller._id);
-
-    if (!foundSeller) {
-      return res.status(404).json({
-        success: false,
-        message: 'Seller not found',
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      data: sellerService.formatSellerProfile(foundSeller),
-    });
-  } catch (error: any) {
-    console.error('Error fetching seller profile:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Something went wrong while fetching seller profile',
-    });
+  if (!foundSeller) {
+    throw new NotFoundError('Seller not found');
   }
-};
 
-export const getSellerNotifications = async (req: AuthRequest, res: Response): Promise<any> => {
+  return res.status(200).json({
+    success: true,
+    data: sellerService.formatSellerProfile(foundSeller),
+  });
+});
+
+export const getSellerNotifications = asyncHandler(async (req: AuthRequest, res: Response): Promise<any> => {
   const sellerId = req.seller?._id;
 
   if (!sellerId) {
-    return res.status(401).json({ success: false, message: 'Unauthorized' });
+    throw new AuthenticationError('Unauthorized');
   }
 
   const notifications = await sellerService.getSellerNotifications(sellerId);
   res.status(200).json({ success: true, notifications });
-};
+});
 
-export const updateLastNotificationSeen = async (req: AuthRequest, res: Response): Promise<any> => {
+export const updateLastNotificationSeen = asyncHandler(async (req: AuthRequest, res: Response): Promise<any> => {
   const sellerId = req.seller?._id;
   const { lastSeenNotificationId } = req.body;
 
   if (!sellerId || !lastSeenNotificationId) {
-    return res.status(400).json({
-      success: false,
-      message: 'Missing seller ID or notification ID',
-    });
+    throw new BadRequestError('Missing seller ID or notification ID');
   }
 
   await sellerService.updateLastNotificationSeen(sellerId, lastSeenNotificationId);
@@ -157,50 +127,40 @@ export const updateLastNotificationSeen = async (req: AuthRequest, res: Response
     success: true,
     message: 'Last seen notification updated successfully',
   });
-};
+});
 
-export const getSellerPayments = async (req: AuthRequest, res: Response): Promise<any> => {
-  try {
-    const { seller } = req;
-    const sellerId = seller?._id;
+export const getSellerPayments = asyncHandler(async (req: AuthRequest, res: Response): Promise<any> => {
+  const { seller } = req;
+  const sellerId = seller?._id;
 
-    if (!sellerId) {
-      return res.status(400).json({ message: 'Seller ID is required' });
-    }
-
-    const payments = await sellerService.getSellerPayments(sellerId);
-    res.status(200).json({ success: true, payments });
-  } catch (error: any) {
-    console.error('Error fetching seller payments:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+  if (!sellerId) {
+    throw new BadRequestError('Seller ID is required');
   }
-};
 
-export const guestSellerLogin = async (req: AuthRequest, res: Response): Promise<any> => {
-  try {
-    const guestEmail = process.env.GUEST_SELLER_EMAIL;
-    const guestPassword = process.env.GUEST_PASSWORD;
+  const payments = await sellerService.getSellerPayments(sellerId);
+  res.status(200).json({ success: true, payments });
+});
 
-    if (!guestEmail || !guestPassword) {
-      return res.status(500).json({ error: 'Guest credentials are not configured' });
-    }
+export const guestSellerLogin = asyncHandler(async (req: AuthRequest, res: Response): Promise<any> => {
+  const guestEmail = process.env.GUEST_SELLER_EMAIL;
+  const guestPassword = process.env.GUEST_PASSWORD;
 
-    const seller = await Seller.findOne({ email: guestEmail }).select('+password');
-    if (!seller) {
-      return res.status(404).json({ error: 'Guest seller not found' });
-    }
-
-    const isMatch = await comparePassword(guestPassword, seller.password);
-    if (!isMatch) {
-      return res.status(401).json({ error: 'Guest authentication failed' });
-    }
-
-    const accessToken = generateToken({ sellerId: seller._id });
-    const sellerData = sellerService.formatSellerData(seller);
-
-    return res.status(200).json({ accessToken, seller: sellerData });
-  } catch (error: any) {
-    console.error('Guest seller login error:', error);
-    return res.status(500).json({ error: 'Server error' });
+  if (!guestEmail || !guestPassword) {
+    throw new Error('Guest credentials are not configured');
   }
-};
+
+  const seller = await Seller.findOne({ email: guestEmail }).select('+password');
+  if (!seller) {
+    throw new NotFoundError('Guest seller not found');
+  }
+
+  const isMatch = await comparePassword(guestPassword, seller.password);
+  if (!isMatch) {
+    throw new AuthenticationError('Guest authentication failed');
+  }
+
+  const accessToken = generateToken({ sellerId: seller._id });
+  const sellerData = sellerService.formatSellerData(seller);
+
+  return res.status(200).json({ accessToken, seller: sellerData });
+});
